@@ -77,8 +77,7 @@ char *argv0;
 #define LIMIT(x, a, b)    (x) = (x) < (a) ? (a) : (x) > (b) ? (b) : (x)
 #define ATTRCMP(a, b) ((a).mode != (b).mode || (a).fg != (b).fg || (a).bg != (b).bg)
 #define IS_SET(flag) ((term.mode & (flag)) != 0)
-#define TIMEDIFF(t1, t2) ((t1.tv_sec-t2.tv_sec)*1000 + (t1.tv_usec-t2.tv_usec)/1000)
-#define CEIL(x) (((x) != (int) (x)) ? (x) + 1 : (x))
+#define TIMEDIFF(t1, t2) ((t1.tv_sec-t2.tv_sec)*1000 + (t1.tv_nsec-t2.tv_nsec)/1E6)
 #define MODBIT(x, set, bit) ((set) ? ((x) |= (bit)) : ((x) &= ~(bit)))
 
 #define TRUECOLOR(r,g,b) (1 << 24 | (r) << 16 | (g) << 8 | (b))
@@ -92,15 +91,19 @@ char *argv0;
 #define VT102ID "\033[?6c"
 
 enum glyph_attribute {
-	ATTR_NULL      = 0,
-	ATTR_REVERSE   = 1,
-	ATTR_UNDERLINE = 2,
-	ATTR_BOLD      = 4,
-	ATTR_ITALIC    = 8,
+        ATTR_NULL      = 0,
+	ATTR_BOLD      = 1,
+	ATTR_FAINT     = 2,
+	ATTR_ITALIC    = 4,
+	ATTR_UNDERLINE = 8,
 	ATTR_BLINK     = 16,
-	ATTR_WRAP      = 32,
-	ATTR_WIDE      = 64,
-	ATTR_WDUMMY    = 128,
+	ATTR_FASTBLINK = 32,
+	ATTR_REVERSE   = 64,
+	ATTR_INVISIBLE = 128,
+	ATTR_STRUCK    = 256,
+	ATTR_WRAP      = 512,
+	ATTR_WIDE      = 1024,
+	ATTR_WDUMMY    = 2048,
 };
 
 enum cursor_movement {
@@ -297,8 +300,8 @@ typedef struct {
 	char *clip;
 	Atom xtarget;
 	bool alt;
-	struct timeval tclick1;
-	struct timeval tclick2;
+	struct timespec tclick1;
+	struct timespec tclick2;
 } Selection;
 
 typedef union {
@@ -863,7 +866,7 @@ mousereport(XEvent *e) {
 
 void
 bpress(XEvent *e) {
-	struct timeval now;
+	struct timespec now;
 	Mousekey *mk;
 
 	if(IS_SET(MODE_MOUSE) && !(e->xbutton.state & forceselmod)) {
@@ -880,7 +883,7 @@ bpress(XEvent *e) {
 	}
 
 	if(e->xbutton.button == Button1) {
-		gettimeofday(&now, NULL);
+		clock_gettime(CLOCK_MONOTONIC, &now);
 
 		/* Clear previous selection, logically and visually. */
 		selclear(NULL);
@@ -1685,14 +1688,24 @@ tsetattr(int *attr, int l) {
 	for(i = 0; i < l; i++) {
 		switch(attr[i]) {
 		case 0:
-			term.c.attr.mode &= ~(ATTR_REVERSE | ATTR_UNDERLINE \
-					| ATTR_BOLD | ATTR_ITALIC \
-					| ATTR_BLINK);
+			term.c.attr.mode &= ~(
+				ATTR_BOLD       |
+				ATTR_FAINT      |
+				ATTR_ITALIC     |
+				ATTR_UNDERLINE  |
+				ATTR_BLINK      |
+				ATTR_FASTBLINK  |
+				ATTR_REVERSE    |
+				ATTR_INVISIBLE  |
+				ATTR_STRUCK     );
 			term.c.attr.fg = defaultfg;
 			term.c.attr.bg = defaultbg;
 			break;
 		case 1:
 			term.c.attr.mode |= ATTR_BOLD;
+			break;
+		case 2:
+			term.c.attr.mode |= ATTR_FAINT;
 			break;
 		case 3:
 			term.c.attr.mode |= ATTR_ITALIC;
@@ -1701,15 +1714,25 @@ tsetattr(int *attr, int l) {
 			term.c.attr.mode |= ATTR_UNDERLINE;
 			break;
 		case 5: /* slow blink */
-		case 6: /* rapid blink */
 			term.c.attr.mode |= ATTR_BLINK;
+			break;
+		case 6: /* rapid blink */
+			term.c.attr.mode |= ATTR_FASTBLINK;
 			break;
 		case 7:
 			term.c.attr.mode |= ATTR_REVERSE;
 			break;
+		case 8:
+			term.c.attr.mode |= ATTR_INVISIBLE;
+			break;
+		case 9:
+			term.c.attr.mode |= ATTR_STRUCK;
+			break;
 		case 21:
-		case 22:
 			term.c.attr.mode &= ~ATTR_BOLD;
+			break;
+		case 22:
+			term.c.attr.mode &= ~ATTR_FAINT;
 			break;
 		case 23:
 			term.c.attr.mode &= ~ATTR_ITALIC;
@@ -1718,11 +1741,19 @@ tsetattr(int *attr, int l) {
 			term.c.attr.mode &= ~ATTR_UNDERLINE;
 			break;
 		case 25:
-		case 26:
 			term.c.attr.mode &= ~ATTR_BLINK;
+			break;
+		case 26:
+			term.c.attr.mode &= ~ATTR_FASTBLINK;
 			break;
 		case 27:
 			term.c.attr.mode &= ~ATTR_REVERSE;
+			break;
+		case 28:
+			term.c.attr.mode &= ~ATTR_INVISIBLE;
+			break;
+		case 29:
+			term.c.attr.mode &= ~ATTR_STRUCK;
 			break;
 		case 38:
 			if ((idx = tdefcolor(attr, &i, l)) >= 0)
@@ -2901,6 +2932,7 @@ xloadfonts(char *fontstr, double fontsize) {
 	FcPattern *pattern;
 	FcResult r_sz, r_psz;
 	double fontval;
+	float ceilf(float);
 
 	if(fontstr[0] == '-') {
 		pattern = XftXlfdParse(fontstr, False, False);
@@ -2946,8 +2978,8 @@ xloadfonts(char *fontstr, double fontsize) {
 	}
 
 	/* Setting character width and height. */
-	xw.cw = CEIL(dc.font.width * cwscale);
-	xw.ch = CEIL(dc.font.height * chscale);
+	xw.cw = ceilf(dc.font.width * cwscale);
+	xw.ch = ceilf(dc.font.height * chscale);
 
 	FcPatternDel(pattern, FC_SLANT);
 	FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ITALIC);
@@ -3002,6 +3034,7 @@ xzoom(const Arg *arg) {
 	xloadfonts(usedfont, usedfontsize + arg->i);
 	cresize(0, 0);
 	redraw(0);
+	xhints();
 }
 
 void
@@ -3247,6 +3280,9 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 	if(base.mode & ATTR_BLINK && term.mode & MODE_BLINK)
 		fg = bg;
 
+	if(base.mode & ATTR_INVISIBLE)
+		fg = bg;
+
 	/* Intelligent cleaning up of the borders. */
 	if(x == 0) {
 		xclear(0, (y == 0)? 0 : winy, borderpx,
@@ -3388,6 +3424,11 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 
 	if(base.mode & ATTR_UNDERLINE) {
 		XftDrawRect(xw.draw, fg, winx, winy + font->ascent + 1,
+				width, 1);
+	}
+
+	if(base.mode & ATTR_STRUCK) {
+		XftDrawRect(xw.draw, fg, winx, winy + 2 * font->ascent / 3,
 				width, 1);
 	}
 
@@ -3752,7 +3793,8 @@ run(void) {
 	int w = xw.w, h = xw.h;
 	fd_set rfd;
 	int xfd = XConnectionNumber(xw.dpy), xev, blinkset = 0, dodraw = 0;
-	struct timeval drawtimeout, *tv = NULL, now, last, lastblink;
+	struct timespec drawtimeout, *tv = NULL, now, last, lastblink;
+	long deltatime;
 
 	/* Waiting for window mapping */
 	while(1) {
@@ -3768,17 +3810,15 @@ run(void) {
 	ttynew();
 	cresize(w, h);
 
-	gettimeofday(&last, NULL);
+	clock_gettime(CLOCK_MONOTONIC, &last);
 	lastblink = last;
 
 	for(xev = actionfps;;) {
-		long deltatime;
-
 		FD_ZERO(&rfd);
 		FD_SET(cmdfd, &rfd);
 		FD_SET(xfd, &rfd);
 
-		if(select(MAX(xfd, cmdfd)+1, &rfd, NULL, NULL, tv) < 0) {
+		if(pselect(MAX(xfd, cmdfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
 			if(errno == EINTR)
 				continue;
 			die("select failed: %s\n", strerror(errno));
@@ -3795,9 +3835,9 @@ run(void) {
 		if(FD_ISSET(xfd, &rfd))
 			xev = actionfps;
 
-		gettimeofday(&now, NULL);
+		clock_gettime(CLOCK_MONOTONIC, &now);
 		drawtimeout.tv_sec = 0;
-		drawtimeout.tv_usec = (1000/xfps) * 1000;
+		drawtimeout.tv_nsec = (1000/xfps) * 1E6;
 		tv = &drawtimeout;
 
 		dodraw = 0;
@@ -3832,9 +3872,9 @@ run(void) {
 				if(blinkset) {
 					if(TIMEDIFF(now, lastblink) \
 							> blinktimeout) {
-						drawtimeout.tv_usec = 1;
+						drawtimeout.tv_nsec = 1000;
 					} else {
-						drawtimeout.tv_usec = (1000 * \
+						drawtimeout.tv_nsec = (1E6 * \
 							(blinktimeout - \
 							TIMEDIFF(now,
 								lastblink)));
