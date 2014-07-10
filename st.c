@@ -378,6 +378,7 @@ static void tdeletechar(int);
 static void tdeleteline(int);
 static void tinsertblank(int);
 static void tinsertblankline(int);
+static int tlinelen(int);
 static void tmoveto(int, int);
 static void tmoveato(int, int);
 static void tnew(int, int);
@@ -407,6 +408,7 @@ static void ttyread(void);
 static void ttyresize(void);
 static void ttysend(char *, size_t);
 static void ttywrite(const char *, size_t);
+static void tstrsequence(uchar c);
 
 static void xdraws(char *, Glyph, int, int, int, int);
 static void xhints(void);
@@ -923,7 +925,7 @@ bpress(XEvent *e) {
 char *
 getsel(void) {
 	char *str, *ptr;
-	int x, y, bufsize, size, ex;
+	int y, bufsize, size, lastx, linelen;
 	Glyph *gp, *last;
 
 	if(sel.ob.x == -1)
@@ -934,16 +936,19 @@ getsel(void) {
 
 	/* append every set & selected glyph to the selection */
 	for(y = sel.nb.y; y < sel.ne.y + 1; y++) {
-		gp = &term.line[y][0];
-		last = &gp[term.col-1];
+		linelen = tlinelen(y);
 
-		while(last >= gp && !(selected(last - gp, y) &&
-				      strcmp(last->c, " ") != 0)) {
-			--last;
+		if(sel.type == SEL_RECTANGULAR) {
+			gp = &term.line[y][sel.nb.x];
+			lastx = sel.ne.x;
+		} else {
+			gp = &term.line[y][sel.nb.y == y ? sel.nb.x : 0];
+			lastx = (sel.ne.y == y) ? sel.ne.x : term.col-1;
 		}
+		last = &term.line[y][MIN(lastx, linelen-1)];
 
-		for(x = 0; gp <= last; x++, ++gp) {
-			if(!selected(x, y) || (gp->mode & ATTR_WDUMMY))
+		for( ; gp <= last; ++gp) {
+			if(gp->mode & ATTR_WDUMMY)
 				continue;
 
 			size = utf8len(gp->c);
@@ -960,20 +965,8 @@ getsel(void) {
 		 * st.
 		 * FIXME: Fix the computer world.
 		 */
-		if(y < sel.ne.y && !(x > 0 && (gp-1)->mode & ATTR_WRAP))
+		if(sel.ne.y > y || lastx >= linelen)
 			*ptr++ = '\n';
-
-		/*
-		 * If the last selected line expands in the selection
-		 * after the visible text '\n' is appended.
-		 */
-		if(y == sel.ne.y) {
-			ex = sel.ne.x;
-			if(sel.nb.y == sel.ne.y && sel.ne.x < sel.nb.x)
-				ex = sel.nb.x;
-			if(tlinelen(y) < ex)
-				*ptr++ = '\n';
-		}
 	}
 	*ptr = 0;
 	return str;
@@ -2290,12 +2283,10 @@ tdumpline(int n) {
 	Glyph *bp, *end;
 
 	bp = &term.line[n][0];
-	end = &bp[term.col-1];
-	while(end > bp && !strcmp(" ", end->c))
-		--end;
-	if(bp != end || strcmp(bp->c, " ")) {
+	end = &bp[MIN(tlinelen(n), term.col) - 1];
+	if(bp != end || bp->c[0] != ' ') {
 		for( ;bp <= end; ++bp)
-			tprinter(bp->c, strlen(bp->c));
+			tprinter(bp->c, utf8len(bp->c));
 	}
 	tprinter("\n", 1);
 }
@@ -2361,6 +2352,30 @@ tdeftran(char ascii) {
 }
 
 void
+tstrsequence(uchar c) {
+	if (c & 0x80) {
+		switch (c) {
+		case 0x90:   /* DCS -- Device Control String */
+			c = 'P';
+			break;
+		case 0x9f:   /* APC -- Application Program Command */
+			c = '_';
+			break;
+		case 0x9e:   /* PM -- Privacy Message */
+			c = '^';
+			break;
+		case 0x9d:   /* OSC -- Operating System Command */
+			c = ']';
+			break;
+		}
+	}
+	strreset();
+	strescseq.type = c;
+	term.esc |= ESC_STR;
+	return;
+}
+
+void
 tcontrolcode(uchar ascii) {
 	static char question[UTF_SIZ] = "?";
 
@@ -2414,20 +2429,30 @@ tcontrolcode(uchar ascii) {
 	case 0177:   /* DEL (IGNORED) */
 		return;
 	case 0x84:   /* TODO: IND */
-	case 0x85:   /* TODO: NEL */
-	case 0x88:   /* TODO: HTS */
+		break;
+	case 0x85:   /* NEL -- Next line */
+		tnewline(1); /* always go to first col */
+		break;
+	case 0x88:   /* HTS -- Horizontal tab stop */
+		term.tabs[term.c.x] = 1;
+		break;
 	case 0x8d:   /* TODO: RI */
 	case 0x8e:   /* TODO: SS2 */
 	case 0x8f:   /* TODO: SS3 */
-	case 0x90:   /* TODO: DCS */
 	case 0x98:   /* TODO: SOS */
-	case 0x9a:   /* TODO: DECID */
+		break;
+	case 0x9a:   /* DECID -- Identify Terminal */
+		ttywrite(VT102ID, sizeof(VT102ID) - 1);
+		break;
 	case 0x9b:   /* TODO: CSI */
 	case 0x9c:   /* TODO: ST */
-	case 0x9d:   /* TODO: OSC */
-	case 0x9e:   /* TODO: PM */
-	case 0x9f:   /* TODO: APC */
 		break;
+	case 0x90:   /* DCS -- Device Control String */
+	case 0x9f:   /* APC -- Application Program Command */
+	case 0x9e:   /* PM -- Privacy Message */
+	case 0x9d:   /* OSC -- Operating System Command */
+		tstrsequence(ascii);
+		return;
 	}
 	/* only CAN, SUB, \a and C1 chars interrupt a sequence */
 	term.esc &= ~(ESC_STR_END|ESC_STR);
@@ -2543,9 +2568,7 @@ tputc(char *c, int len) {
 			case '^': /* PM -- Privacy Message */
 			case ']': /* OSC -- Operating System Command */
 			case 'k': /* old title set compatibility */
-				strreset();
-				strescseq.type = ascii;
-				term.esc |= ESC_STR;
+				tstrsequence(ascii);
 				return;
 			case '(': /* set primary charset G0 */
 			case ')': /* set secondary charset G1 */
@@ -3233,7 +3256,7 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 		 * change basic system colors [0-7]
 		 * to bright system colors [8-15]
 		 */
-		if(BETWEEN(base.fg, 0, 7))
+		if(BETWEEN(base.fg, 0, 7) && !(base.mode & ATTR_FAINT))
 			fg = &dc.col[base.fg + 8];
 
 		if(base.mode & ATTR_ITALIC) {
@@ -3275,6 +3298,14 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 		temp = fg;
 		fg = bg;
 		bg = temp;
+	}
+
+	if(base.mode & ATTR_FAINT && !(base.mode & ATTR_BOLD)) {
+		colfg.red = fg->color.red / 2;
+		colfg.green = fg->color.green / 2;
+		colfg.blue = fg->color.blue / 2;
+		XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colfg, &revfg);
+		fg = &revfg;
 	}
 
 	if(base.mode & ATTR_BLINK && term.mode & MODE_BLINK)
