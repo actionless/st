@@ -647,7 +647,7 @@ selinit(void) {
 
 static int
 x2col(int x) {
-	x -= borderpx;
+	x -= borderxpx;
 	x /= xw.cw;
 
 	return LIMIT(x, 0, term.col-1);
@@ -655,7 +655,7 @@ x2col(int x) {
 
 static int
 y2row(int y) {
-	y -= borderpx;
+	y -= borderypx;
 	y /= xw.ch;
 
 	return LIMIT(y, 0, term.row-1);
@@ -2852,8 +2852,8 @@ void
 xtermclear(int col1, int row1, int col2, int row2) {
 	XftDrawRect(xw.draw,
 			&dc.col[IS_SET(MODE_REVERSE) ? defaultfg : defaultbg],
-			borderpx + col1 * xw.cw,
-			borderpx + row1 * xw.ch,
+			borderxpx + col1 * xw.cw,
+			borderypx + row1 * xw.ch,
 			(col2-col1+1) * xw.cw,
 			(row2-row1+1) * xw.ch);
 }
@@ -2881,8 +2881,8 @@ xhints(void) {
 	sizeh->width = xw.w;
 	sizeh->height_inc = xw.ch;
 	sizeh->width_inc = xw.cw;
-	sizeh->base_height = 2 * borderpx;
-	sizeh->base_width = 2 * borderpx;
+	sizeh->base_height = 2 * borderypx;
+	sizeh->base_width = 2 * borderxpx;
 	if(xw.isfixed == True) {
 		sizeh->flags |= PMaxSize | PMinSize;
 		sizeh->min_width = sizeh->max_width = xw.w;
@@ -3075,8 +3075,8 @@ xinit(void) {
 	xloadcols();
 
 	/* adjust fixed window geometry */
-	xw.w = 2 * borderpx + term.col * xw.cw;
-	xw.h = 2 * borderpx + term.row * xw.ch;
+	xw.w = 2 * borderxpx + term.col * xw.cw;
+	xw.h = 2 * borderypx + term.row * xw.ch;
 	if(xw.gm & XNegative)
 		xw.l += DisplayWidth(xw.dpy, xw.scr) - xw.w - 2;
 	if(xw.gm & YNegative)
@@ -3152,7 +3152,7 @@ xinit(void) {
 
 void
 xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
-	int winx = borderpx + x * xw.cw, winy = borderpx + y * xw.ch,
+	int winx = borderxpx + x * xw.cw, winy = borderypx + y * xw.ch,
 	    width = charlen * xw.cw, xp, i;
 	int frcflags;
 	int u8fl, u8fblen, u8cblen, doesexist;
@@ -3272,7 +3272,7 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 
 	/* Intelligent cleaning up of the borders. */
 	if(x == 0) {
-		xclear(0, (y == 0)? 0 : winy, borderpx,
+		xclear(0, (y == 0)? 0 : winy, borderxpx,
 			winy + xw.ch + ((y >= term.row-1)? xw.h : 0));
 	}
 	if(x + charlen >= term.col) {
@@ -3280,7 +3280,7 @@ xdraws(char *s, Glyph base, int x, int y, int charlen, int bytelen) {
 			((y >= term.row-1)? xw.h : (winy + xw.ch)));
 	}
 	if(y == 0)
-		xclear(winx, 0, winx + width, borderpx);
+		xclear(winx, 0, winx + width, borderypx);
 	if(y == term.row-1)
 		xclear(winx, winy + xw.ch, winx + width, xw.h);
 
@@ -3463,20 +3463,20 @@ xdrawcursor(void) {
 			xdraws(g.c, g, term.c.x, term.c.y, width, sl);
 		} else {
 			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderpx + curx * xw.cw,
-					borderpx + term.c.y * xw.ch,
+					borderxpx + curx * xw.cw,
+					borderypx + term.c.y * xw.ch,
 					xw.cw - 1, 1);
 			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderpx + curx * xw.cw,
-					borderpx + term.c.y * xw.ch,
+					borderxpx + curx * xw.cw,
+					borderypx + term.c.y * xw.ch,
 					1, xw.ch - 1);
 			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderpx + (curx + 1) * xw.cw - 1,
-					borderpx + term.c.y * xw.ch,
+					borderxpx + (curx + 1) * xw.cw - 1,
+					borderypx + term.c.y * xw.ch,
 					1, xw.ch - 1);
 			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderpx + curx * xw.cw,
-					borderpx + (term.c.y + 1) * xw.ch - 1,
+					borderxpx + curx * xw.cw,
+					borderypx + (term.c.y + 1) * xw.ch - 1,
 					xw.cw, 1);
 		}
 		oldx = curx, oldy = term.c.y;
@@ -3758,8 +3758,8 @@ cresize(int width, int height) {
 	if(height != 0)
 		xw.h = height;
 
-	col = (xw.w - 2 * borderpx) / xw.cw;
-	row = (xw.h - 2 * borderpx) / xw.ch;
+	col = (xw.w - 2 * borderxpx) / xw.cw;
+	row = (xw.h - 2 * borderypx) / xw.ch;
 
 	tresize(col, row);
 	xresize(col, row);
