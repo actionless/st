@@ -70,7 +70,7 @@ char *argv0;
 #define LEN(a)     (sizeof(a) / sizeof(a)[0])
 #define DEFAULT(a, b)     (a) = (a) ? (a) : (b)
 #define BETWEEN(x, a, b)  ((a) <= (x) && (x) <= (b))
-#define ISCONTROLC0(c) (BETWEEN(c, 0, 0x1f))
+#define ISCONTROLC0(c) (BETWEEN(c, 0, 0x1f) || (c) == '\177')
 #define ISCONTROLC1(c) (BETWEEN(c, 0x80, 0x9f))
 #define ISCONTROL(c) (ISCONTROLC0(c) || ISCONTROLC1(c))
 #define LIMIT(x, a, b)    (x) = (x) < (a) ? (a) : (x) > (b) ? (b) : (x)
@@ -86,22 +86,19 @@ char *argv0;
 #define TRUEBLUE(x)      (((x) & 0xff) << 8)
 
 
-#define VT102ID "\033[?6c"
-
 enum glyph_attribute {
-        ATTR_NULL      = 0,
+	ATTR_NULL      = 0,
 	ATTR_BOLD      = 1,
 	ATTR_FAINT     = 2,
 	ATTR_ITALIC    = 4,
 	ATTR_UNDERLINE = 8,
 	ATTR_BLINK     = 16,
-	ATTR_FASTBLINK = 32,
-	ATTR_REVERSE   = 64,
-	ATTR_INVISIBLE = 128,
-	ATTR_STRUCK    = 256,
-	ATTR_WRAP      = 512,
-	ATTR_WIDE      = 1024,
-	ATTR_WDUMMY    = 2048,
+	ATTR_REVERSE   = 32,
+	ATTR_INVISIBLE = 64,
+	ATTR_STRUCK    = 128,
+	ATTR_WRAP      = 256,
+	ATTR_WIDE      = 512,
+	ATTR_WDUMMY    = 1024,
 };
 
 enum cursor_movement {
@@ -383,7 +380,7 @@ static void tnewline(int);
 static void tputtab(int);
 static void tputc(char *, int);
 static void treset(void);
-static int tresize(int, int);
+static void tresize(int, int);
 static void tscrollup(int, int);
 static void tscrolldown(int, int);
 static void tsetattr(int *, int);
@@ -1177,16 +1174,15 @@ execsh(void) {
 
 void
 sigchld(int a) {
-	int stat = 0;
+	int stat, ret;
 
 	if(waitpid(pid, &stat, 0) < 0)
 		die("Waiting for pid %hd failed: %s\n", pid, strerror(errno));
 
-	if(WIFEXITED(stat)) {
-		exit(WEXITSTATUS(stat));
-	} else {
-		exit(EXIT_FAILURE);
-	}
+	ret = WIFEXITED(stat) ? WEXITSTATUS(stat) : EXIT_FAILURE;
+	if (ret != EXIT_SUCCESS)
+		die("child finished with error '%d'\n", stat);
+	exit(EXIT_SUCCESS);
 }
 
 void
@@ -1360,9 +1356,12 @@ treset(void) {
 	memset(term.trantbl, sizeof(term.trantbl), CS_USA);
 	term.charset = 0;
 
-	tclearregion(0, 0, term.col-1, term.row-1);
-	tmoveto(0, 0);
-	tcursor(CURSOR_SAVE);
+	for(i = 0; i < 2; i++) {
+		tmoveto(0, 0);
+		tcursor(CURSOR_SAVE);
+		tclearregion(0, 0, term.col-1, term.row-1);
+		tswapscreen();
+	}
 }
 
 void
@@ -1555,6 +1554,7 @@ tsetchar(char *c, Glyph *attr, int x, int y) {
 void
 tclearregion(int x1, int y1, int x2, int y2) {
 	int x, y, temp;
+	Glyph *gp;
 
 	if(x1 > x2)
 		temp = x1, x1 = x2, x2 = temp;
@@ -1569,10 +1569,13 @@ tclearregion(int x1, int y1, int x2, int y2) {
 	for(y = y1; y <= y2; y++) {
 		term.dirty[y] = 1;
 		for(x = x1; x <= x2; x++) {
+			gp = &term.line[y][x];
 			if(selected(x, y))
 				selclear(NULL);
-			term.line[y][x] = term.c.attr;
-			memcpy(term.line[y][x].c, " ", 2);
+			gp->fg = term.c.attr.fg;
+			gp->bg = term.c.attr.bg;
+			gp->mode = 0;
+			memcpy(gp->c, " ", 2);
 		}
 	}
 }
@@ -1684,7 +1687,6 @@ tsetattr(int *attr, int l) {
 				ATTR_ITALIC     |
 				ATTR_UNDERLINE  |
 				ATTR_BLINK      |
-				ATTR_FASTBLINK  |
 				ATTR_REVERSE    |
 				ATTR_INVISIBLE  |
 				ATTR_STRUCK     );
@@ -1704,10 +1706,9 @@ tsetattr(int *attr, int l) {
 			term.c.attr.mode |= ATTR_UNDERLINE;
 			break;
 		case 5: /* slow blink */
-			term.c.attr.mode |= ATTR_BLINK;
-			break;
+			/* FALLTHROUGH */
 		case 6: /* rapid blink */
-			term.c.attr.mode |= ATTR_FASTBLINK;
+			term.c.attr.mode |= ATTR_BLINK;
 			break;
 		case 7:
 			term.c.attr.mode |= ATTR_REVERSE;
@@ -1718,11 +1719,8 @@ tsetattr(int *attr, int l) {
 		case 9:
 			term.c.attr.mode |= ATTR_STRUCK;
 			break;
-		case 21:
-			term.c.attr.mode &= ~ATTR_BOLD;
-			break;
 		case 22:
-			term.c.attr.mode &= ~ATTR_FAINT;
+			term.c.attr.mode &= ~(ATTR_BOLD | ATTR_FAINT);
 			break;
 		case 23:
 			term.c.attr.mode &= ~ATTR_ITALIC;
@@ -1732,9 +1730,6 @@ tsetattr(int *attr, int l) {
 			break;
 		case 25:
 			term.c.attr.mode &= ~ATTR_BLINK;
-			break;
-		case 26:
-			term.c.attr.mode &= ~ATTR_FASTBLINK;
 			break;
 		case 27:
 			term.c.attr.mode &= ~ATTR_REVERSE;
@@ -1971,7 +1966,7 @@ csihandle(void) {
 		break;
 	case 'c': /* DA -- Device Attributes */
 		if(csiescseq.arg[0] == 0)
-			ttywrite(VT102ID, sizeof(VT102ID) - 1);
+			ttywrite(vtiden, sizeof(vtiden) - 1);
 		break;
 	case 'C': /* CUF -- Cursor <n> Forward */
 	case 'a': /* HPR -- Cursor <n> Forward */
@@ -2317,13 +2312,13 @@ techo(char *buf, int len) {
 	for(; len > 0; buf++, len--) {
 		char c = *buf;
 
-		if(ISCONTROL(c)) { /* control code */
+		if(ISCONTROL((uchar) c)) { /* control code */
 			if(c & 0x80) {
 				c &= 0x7f;
 				tputc("^", 1);
 				tputc("[", 1);
 			} else if(c != '\n' && c != '\r' && c != '\t') {
-				c ^= '\x40';
+				c ^= 0x40;
 				tputc("^", 1);
 			}
 			tputc(&c, 1);
@@ -2439,7 +2434,7 @@ tcontrolcode(uchar ascii) {
 	case 0x98:   /* TODO: SOS */
 		break;
 	case 0x9a:   /* DECID -- Identify Terminal */
-		ttywrite(VT102ID, sizeof(VT102ID) - 1);
+		ttywrite(vtiden, sizeof(vtiden) - 1);
 		break;
 	case 0x9b:   /* TODO: CSI */
 	case 0x9c:   /* TODO: ST */
@@ -2595,7 +2590,7 @@ tputc(char *c, int len) {
 				}
 				break;
 			case 'Z': /* DECID -- Identify Terminal */
-				ttywrite(VT102ID, sizeof(VT102ID) - 1);
+				ttywrite(vtiden, sizeof(vtiden) - 1);
 				break;
 			case 'c': /* RIS -- Reset to inital state */
 				treset();
@@ -2662,18 +2657,20 @@ tputc(char *c, int len) {
 	}
 }
 
-int
+void
 tresize(int col, int row) {
 	int i;
 	int minrow = MIN(row, term.row);
 	int mincol = MIN(col, term.col);
 	int slide = term.c.y - row + 1;
 	bool *bp;
-	Line *orig;
 	TCursor c;
 
-	if(col < 1 || row < 1)
-		return 0;
+	if(col < 1 || row < 1) {
+		fprintf(stderr,
+		        "tresize: error resizing to %dx%d\n", col, row);
+		return;
+	}
 
 	/* free unneeded rows */
 	i = 0;
@@ -2703,14 +2700,12 @@ tresize(int col, int row) {
 
 	/* resize each row to new width, zero-pad if needed */
 	for(i = 0; i < minrow; i++) {
-		term.dirty[i] = 1;
 		term.line[i] = xrealloc(term.line[i], col * sizeof(Glyph));
 		term.alt[i]  = xrealloc(term.alt[i],  col * sizeof(Glyph));
 	}
 
 	/* allocate any new rows */
 	for(/* i == minrow */; i < row; i++) {
-		term.dirty[i] = 1;
 		term.line[i] = xmalloc(col * sizeof(Glyph));
 		term.alt[i] = xmalloc(col * sizeof(Glyph));
 	}
@@ -2730,10 +2725,9 @@ tresize(int col, int row) {
 	tsetscroll(0, row-1);
 	/* make use of the LIMIT in tmoveto */
 	tmoveto(term.c.x, term.c.y);
-	/* Clearing both screens */
-	orig = term.line;
+	/* Clearing both screens (it makes dirty all lines) */
 	c = term.c;
-	do {
+	for(i = 0; i < 2; i++) {
 		if(mincol < col && 0 < minrow) {
 			tclearregion(mincol, 0, col - 1, minrow - 1);
 		}
@@ -2742,10 +2736,8 @@ tresize(int col, int row) {
 		}
 		tswapscreen();
 		tcursor(CURSOR_LOAD);
-	} while(orig != term.line);
+	}
 	term.c = c;
-
-	return (slide > 0);
 }
 
 void
@@ -3786,6 +3778,8 @@ run(void) {
 	/* Waiting for window mapping */
 	while(1) {
 		XNextEvent(xw.dpy, &ev);
+		if(XFilterEvent(&ev, None))
+			continue;
 		if(ev.type == ConfigureNotify) {
 			w = ev.xconfigure.width;
 			h = ev.xconfigure.height;
@@ -3877,8 +3871,8 @@ run(void) {
 void
 usage(void) {
 	die("%s " VERSION " (c) 2010-2014 st engineers\n" \
-	"usage: st [-a] [-v] [-c class] [-f font] [-g geometry] [-o file]" \
-	" [-t title] [-w windowid] [-e command ...]\n", argv0);
+	"usage: st [-a] [-v] [-c class] [-f font] [-g geometry] [-o file]\n"
+	"          [-i] [-t title] [-w windowid] [-e command ...]\n", argv0);
 }
 
 int

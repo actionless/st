@@ -9,6 +9,9 @@ static char font[] = "Liberation Mono:pixelsize=12:antialias=false:autohint=fals
 static int borderpx = 2;
 static char shell[] = "/bin/sh";
 
+/* identification sequence returned in DA and DECID */
+static char vtiden[] = "\033[?6c";
+
 /* Kerning / character bounding-box multipliers */
 static float cwscale = 1.0;
 static float chscale = 1.0;
@@ -197,7 +200,8 @@ static Key key[] = {
 	{ XK_KP_Delete,     ControlMask,    "\033[3;5~",    +1,    0,    0},
 	{ XK_KP_Delete,     ShiftMask,      "\033[2K",      -1,    0,    0},
 	{ XK_KP_Delete,     ShiftMask,      "\033[3;2~",    +1,    0,    0},
-	{ XK_KP_Delete,     XK_ANY_MOD,     "\033[3~",      +1,    0,    0},
+	{ XK_KP_Delete,     XK_ANY_MOD,     "\033[P",       -1,    0,    0},
+	{ XK_KP_Delete,     XK_ANY_MOD,     "\177",         +1,    0,    0},
 	{ XK_KP_Multiply,   XK_ANY_MOD,     "\033Oj",       +2,    0,    0},
 	{ XK_KP_Add,        XK_ANY_MOD,     "\033Ok",       +2,    0,    0},
 	{ XK_KP_Enter,      XK_ANY_MOD,     "\033OM",       +2,    0,    0},
@@ -251,7 +255,8 @@ static Key key[] = {
 	{ XK_Delete,        ControlMask,    "\033[3;5~",    +1,    0,    0},
 	{ XK_Delete,        ShiftMask,      "\033[2K",      -1,    0,    0},
 	{ XK_Delete,        ShiftMask,      "\033[3;2~",    +1,    0,    0},
-	{ XK_Delete,        XK_ANY_MOD,     "\033[3~",      +1,    0,    0},
+	{ XK_Delete,        XK_ANY_MOD,     "\033[P",       -1,    0,    0},
+	{ XK_Delete,        XK_ANY_MOD,     "\177",         +1,    0,    0},
 	{ XK_Home,          ShiftMask,      "\033[2J",       0,   -1,    0},
 	{ XK_Home,          ShiftMask,      "\033[1;2H",     0,   +1,    0},
 	{ XK_Home,          XK_ANY_MOD,     "\033[H",        0,   -1,    0},
