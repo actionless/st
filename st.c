@@ -88,17 +88,17 @@ char *argv0;
 
 enum glyph_attribute {
 	ATTR_NULL      = 0,
-	ATTR_BOLD      = 1,
-	ATTR_FAINT     = 2,
-	ATTR_ITALIC    = 4,
-	ATTR_UNDERLINE = 8,
-	ATTR_BLINK     = 16,
-	ATTR_REVERSE   = 32,
-	ATTR_INVISIBLE = 64,
-	ATTR_STRUCK    = 128,
-	ATTR_WRAP      = 256,
-	ATTR_WIDE      = 512,
-	ATTR_WDUMMY    = 1024,
+	ATTR_BOLD      = 1 << 0,
+	ATTR_FAINT     = 1 << 1,
+	ATTR_ITALIC    = 1 << 2,
+	ATTR_UNDERLINE = 1 << 3,
+	ATTR_BLINK     = 1 << 4,
+	ATTR_REVERSE   = 1 << 5,
+	ATTR_INVISIBLE = 1 << 6,
+	ATTR_STRUCK    = 1 << 7,
+	ATTR_WRAP      = 1 << 8,
+	ATTR_WIDE      = 1 << 9,
+	ATTR_WDUMMY    = 1 << 10,
 };
 
 enum cursor_movement {
@@ -113,27 +113,27 @@ enum cursor_state {
 };
 
 enum term_mode {
-	MODE_WRAP        = 1,
-	MODE_INSERT      = 2,
-	MODE_APPKEYPAD   = 4,
-	MODE_ALTSCREEN   = 8,
-	MODE_CRLF        = 16,
-	MODE_MOUSEBTN    = 32,
-	MODE_MOUSEMOTION = 64,
-	MODE_REVERSE     = 128,
-	MODE_KBDLOCK     = 256,
-	MODE_HIDE        = 512,
-	MODE_ECHO        = 1024,
-	MODE_APPCURSOR   = 2048,
-	MODE_MOUSESGR    = 4096,
-	MODE_8BIT        = 8192,
-	MODE_BLINK       = 16384,
-	MODE_FBLINK      = 32768,
-	MODE_FOCUS       = 65536,
-	MODE_MOUSEX10    = 131072,
-	MODE_MOUSEMANY   = 262144,
-	MODE_BRCKTPASTE  = 524288,
-	MODE_PRINT       = 1048576,
+	MODE_WRAP        = 1 << 0,
+	MODE_INSERT      = 1 << 1,
+	MODE_APPKEYPAD   = 1 << 2,
+	MODE_ALTSCREEN   = 1 << 3,
+	MODE_CRLF        = 1 << 4,
+	MODE_MOUSEBTN    = 1 << 5,
+	MODE_MOUSEMOTION = 1 << 6,
+	MODE_REVERSE     = 1 << 7,
+	MODE_KBDLOCK     = 1 << 8,
+	MODE_HIDE        = 1 << 9,
+	MODE_ECHO        = 1 << 10,
+	MODE_APPCURSOR   = 1 << 11,
+	MODE_MOUSESGR    = 1 << 12,
+	MODE_8BIT        = 1 << 13,
+	MODE_BLINK       = 1 << 14,
+	MODE_FBLINK      = 1 << 15,
+	MODE_FOCUS       = 1 << 16,
+	MODE_MOUSEX10    = 1 << 17,
+	MODE_MOUSEMANY   = 1 << 18,
+	MODE_BRCKTPASTE  = 1 << 19,
+	MODE_PRINT       = 1 << 20,
 	MODE_MOUSE       = MODE_MOUSEBTN|MODE_MOUSEMOTION|MODE_MOUSEX10\
 	                  |MODE_MOUSEMANY,
 };
@@ -356,6 +356,7 @@ static void csidump(void);
 static void csihandle(void);
 static void csiparse(void);
 static void csireset(void);
+static int eschandle(uchar ascii);
 static void strdump(void);
 static void strhandle(void);
 static void strparse(void);
@@ -661,7 +662,10 @@ y2row(int y) {
 static int tlinelen(int y) {
 	int i = term.col;
 
-	while (i > 0 && term.line[y][i - 1].c[0] == ' ')
+	if(term.line[y][i - 1].mode & ATTR_WRAP)
+		return i;
+
+	while(i > 0 && term.line[y][i - 1].c[0] == ' ')
 		--i;
 
 	return i;
@@ -680,6 +684,9 @@ selnormalize(void) {
 	}
 	sel.nb.y = MIN(sel.ob.y, sel.oe.y);
 	sel.ne.y = MAX(sel.ob.y, sel.oe.y);
+
+	selsnap(sel.snap, &sel.nb.x, &sel.nb.y, -1);
+	selsnap(sel.snap, &sel.ne.x, &sel.ne.y, +1);
 
 	/* expand selection over line breaks */
 	if (sel.type == SEL_RECTANGULAR)
@@ -705,7 +712,8 @@ selected(int x, int y) {
 void
 selsnap(int mode, int *x, int *y, int direction) {
 	int newx, newy, xt, yt;
-	Glyph *gp;
+	bool delim, prevdelim;
+	Glyph *gp, *prevgp;
 
 	switch(mode) {
 	case SNAP_WORD:
@@ -713,6 +721,8 @@ selsnap(int mode, int *x, int *y, int direction) {
 		 * Snap around if the word wraps around at the end or
 		 * beginning of a line.
 		 */
+		prevgp = &term.line[*y][*x];
+		prevdelim = strchr(worddelimiters, prevgp->c[0]) != NULL;
 		for(;;) {
 			newx = *x + direction;
 			newy = *y;
@@ -734,11 +744,15 @@ selsnap(int mode, int *x, int *y, int direction) {
 				break;
 
 			gp = &term.line[newy][newx];
-			if (!(gp->mode & ATTR_WDUMMY) && strchr(worddelimiters, gp->c[0]))
+			delim = strchr(worddelimiters, gp->c[0]) != NULL;
+			if(!(gp->mode & ATTR_WDUMMY) && (delim != prevdelim
+					|| (delim && gp->c[0] != prevgp->c[0])))
 				break;
 
 			*x = newx;
 			*y = newy;
+			prevgp = gp;
+			prevdelim = delim;
 		}
 		break;
 	case SNAP_LINE:
@@ -776,15 +790,6 @@ getbuttoninfo(XEvent *e) {
 
 	sel.oe.x = x2col(e->xbutton.x);
 	sel.oe.y = y2row(e->xbutton.y);
-
-	if(sel.ob.y < sel.oe.y
-			|| (sel.ob.y == sel.oe.y && sel.ob.x < sel.oe.x)) {
-		selsnap(sel.snap, &sel.ob.x, &sel.ob.y, -1);
-		selsnap(sel.snap, &sel.oe.x, &sel.oe.y, +1);
-	} else {
-		selsnap(sel.snap, &sel.oe.x, &sel.oe.y, -1);
-		selsnap(sel.snap, &sel.ob.x, &sel.ob.y, +1);
-	}
 	selnormalize();
 
 	sel.type = SEL_REGULAR;
@@ -899,8 +904,6 @@ bpress(XEvent *e) {
 		} else {
 			sel.snap = 0;
 		}
-		selsnap(sel.snap, &sel.ob.x, &sel.ob.y, -1);
-		selsnap(sel.snap, &sel.oe.x, &sel.oe.y, +1);
 		selnormalize();
 
 		/*
@@ -959,7 +962,7 @@ getsel(void) {
 		 * st.
 		 * FIXME: Fix the computer world.
 		 */
-		if(sel.ne.y > y || lastx >= linelen)
+		if((y < sel.ne.y || lastx >= linelen) && !(last->mode & ATTR_WRAP))
 			*ptr++ = '\n';
 	}
 	*ptr = 0;
@@ -1139,23 +1142,29 @@ die(const char *errstr, ...) {
 
 void
 execsh(void) {
-	char **args;
-	char *envshell = getenv("SHELL");
-	const struct passwd *pass = getpwuid(getuid());
+	char **args, *sh;
+	const struct passwd *pw;
 	char buf[sizeof(long) * 8 + 1];
 
+	errno = 0;
+	if((pw = getpwuid(getuid())) == NULL) {
+		if(errno)
+			die("getpwuid:%s\n", strerror(errno));
+		else
+			die("who are you?\n");
+	}
 	unsetenv("COLUMNS");
 	unsetenv("LINES");
 	unsetenv("TERMCAP");
 
-	if(pass) {
-		setenv("LOGNAME", pass->pw_name, 1);
-		setenv("USER", pass->pw_name, 1);
-		setenv("SHELL", pass->pw_shell, 0);
-		setenv("HOME", pass->pw_dir, 0);
-	}
-
+	sh = (pw->pw_shell[0]) ? pw->pw_shell : shell;
 	snprintf(buf, sizeof(buf), "%lu", xw.win);
+
+	setenv("LOGNAME", pw->pw_name, 1);
+	setenv("USER", pw->pw_name, 1);
+	setenv("SHELL", sh, 1);
+	setenv("HOME", pw->pw_dir, 1);
+	setenv("TERM", termname, 1);
 	setenv("WINDOWID", buf, 1);
 
 	signal(SIGCHLD, SIG_DFL);
@@ -1165,9 +1174,7 @@ execsh(void) {
 	signal(SIGTERM, SIG_DFL);
 	signal(SIGALRM, SIG_DFL);
 
-	DEFAULT(envshell, shell);
-	setenv("TERM", termname, 1);
-	args = opt_cmd ? opt_cmd : (char *[]){envshell, "-i", NULL};
+	args = opt_cmd ? opt_cmd : (char *[]){sh, "-i", NULL};
 	execvp(args[0], args);
 	exit(EXIT_FAILURE);
 }
@@ -2344,6 +2351,19 @@ tdeftran(char ascii) {
 }
 
 void
+tdectest(char c) {
+	static char E[UTF_SIZ] = "E";
+	int x, y;
+
+	if(c == '8') { /* DEC screen alignment test. */
+		for(x = 0; x < term.col; ++x) {
+			for(y = 0; y < term.row; ++y)
+				tsetchar(E, &term.c.attr, x, y);
+		}
+	}
+}
+
+void
 tstrsequence(uchar c) {
 	if (c & 0x80) {
 		switch (c) {
@@ -2451,17 +2471,83 @@ tcontrolcode(uchar ascii) {
 	return;
 }
 
-void
-tdectest(char c) {
-	static char E[UTF_SIZ] = "E";
-	int x, y;
-
-	if(c == '8') { /* DEC screen alignment test. */
-		for(x = 0; x < term.col; ++x) {
-			for(y = 0; y < term.row; ++y)
-				tsetchar(E, &term.c.attr, x, y);
+/*
+ * returns 1 when the sequence is finished and it hasn't to read
+ * more characters for this sequence, otherwise 0
+ */
+int
+eschandle(uchar ascii) {
+	switch(ascii) {
+	case '[':
+		term.esc |= ESC_CSI;
+		return 0;
+	case '#':
+		term.esc |= ESC_TEST;
+		return 0;
+	case 'P': /* DCS -- Device Control String */
+	case '_': /* APC -- Application Program Command */
+	case '^': /* PM -- Privacy Message */
+	case ']': /* OSC -- Operating System Command */
+	case 'k': /* old title set compatibility */
+		tstrsequence(ascii);
+		return 0;
+	case '(': /* set primary charset G0 */
+	case ')': /* set secondary charset G1 */
+	case '*': /* set tertiary charset G2 */
+	case '+': /* set quaternary charset G3 */
+		term.icharset = ascii - '(';
+		term.esc |= ESC_ALTCHARSET;
+		return 0;
+	case 'D': /* IND -- Linefeed */
+		if(term.c.y == term.bot) {
+			tscrollup(term.top, 1);
+		} else {
+			tmoveto(term.c.x, term.c.y+1);
 		}
+		break;
+	case 'E': /* NEL -- Next line */
+		tnewline(1); /* always go to first col */
+		break;
+	case 'H': /* HTS -- Horizontal tab stop */
+		term.tabs[term.c.x] = 1;
+		break;
+	case 'M': /* RI -- Reverse index */
+		if(term.c.y == term.top) {
+			tscrolldown(term.top, 1);
+		} else {
+			tmoveto(term.c.x, term.c.y-1);
+		}
+		break;
+	case 'Z': /* DECID -- Identify Terminal */
+		ttywrite(vtiden, sizeof(vtiden) - 1);
+		break;
+	case 'c': /* RIS -- Reset to inital state */
+		treset();
+		xresettitle();
+		xloadcols();
+		break;
+	case '=': /* DECPAM -- Application keypad */
+		term.mode |= MODE_APPKEYPAD;
+		break;
+	case '>': /* DECPNM -- Normal keypad */
+		term.mode &= ~MODE_APPKEYPAD;
+		break;
+	case '7': /* DECSC -- Save Cursor */
+		tcursor(CURSOR_SAVE);
+		break;
+	case '8': /* DECRC -- Restore Cursor */
+		tcursor(CURSOR_LOAD);
+		break;
+	case '\\': /* ST -- String Terminator */
+		if(term.esc & ESC_STR_END)
+			strhandle();
+		break;
+	default:
+		fprintf(stderr, "erresc: unknown sequence ESC 0x%02X '%c'\n",
+			(uchar) ascii, isprint(ascii)? ascii:'.');
+		break;
 	}
+	return 1;
 }
 
 void
@@ -2548,76 +2634,9 @@ tputc(char *c, int len) {
 		} else if(term.esc & ESC_TEST) {
 			tdectest(ascii);
 		} else {
-			switch(ascii) {
-			case '[':
-				term.esc |= ESC_CSI;
+			if (!eschandle(ascii))
 				return;
-			case '#':
-				term.esc |= ESC_TEST;
-				return;
-			case 'P': /* DCS -- Device Control String */
-			case '_': /* APC -- Application Program Command */
-			case '^': /* PM -- Privacy Message */
-			case ']': /* OSC -- Operating System Command */
-			case 'k': /* old title set compatibility */
-				tstrsequence(ascii);
-				return;
-			case '(': /* set primary charset G0 */
-			case ')': /* set secondary charset G1 */
-			case '*': /* set tertiary charset G2 */
-			case '+': /* set quaternary charset G3 */
-				term.icharset = ascii - '(';
-				term.esc |= ESC_ALTCHARSET;
-				return;
-			case 'D': /* IND -- Linefeed */
-				if(term.c.y == term.bot) {
-					tscrollup(term.top, 1);
-				} else {
-					tmoveto(term.c.x, term.c.y+1);
-				}
-				break;
-			case 'E': /* NEL -- Next line */
-				tnewline(1); /* always go to first col */
-				break;
-			case 'H': /* HTS -- Horizontal tab stop */
-				term.tabs[term.c.x] = 1;
-				break;
-			case 'M': /* RI -- Reverse index */
-				if(term.c.y == term.top) {
-					tscrolldown(term.top, 1);
-				} else {
-					tmoveto(term.c.x, term.c.y-1);
-				}
-				break;
-			case 'Z': /* DECID -- Identify Terminal */
-				ttywrite(vtiden, sizeof(vtiden) - 1);
-				break;
-			case 'c': /* RIS -- Reset to inital state */
-				treset();
-				xresettitle();
-				xloadcols();
-				break;
-			case '=': /* DECPAM -- Application keypad */
-				term.mode |= MODE_APPKEYPAD;
-				break;
-			case '>': /* DECPNM -- Normal keypad */
-				term.mode &= ~MODE_APPKEYPAD;
-				break;
-			case '7': /* DECSC -- Save Cursor */
-				tcursor(CURSOR_SAVE);
-				break;
-			case '8': /* DECRC -- Restore Cursor */
-				tcursor(CURSOR_LOAD);
-				break;
-			case '\\': /* ST -- String Terminator */
-				if(term.esc & ESC_STR_END)
-					strhandle();
-				break;
-			default:
-				fprintf(stderr, "erresc: unknown sequence ESC 0x%02X '%c'\n",
-					(uchar) ascii, isprint(ascii)? ascii:'.');
-				break;
-			}
+			/* sequence already finished */
 		}
 		term.esc = 0;
 		/*
@@ -3440,39 +3459,40 @@ xdrawcursor(void) {
 	xdraws(term.line[oldy][oldx].c, term.line[oldy][oldx], oldx,
 			oldy, width, sl);
 
-	/* draw the new one */
-	if(!(IS_SET(MODE_HIDE))) {
-		if(xw.state & WIN_FOCUSED) {
-			if(IS_SET(MODE_REVERSE)) {
-				g.mode |= ATTR_REVERSE;
-				g.fg = defaultcs;
-				g.bg = defaultfg;
-			}
+	if(IS_SET(MODE_HIDE))
+		return;
 
-			sl = utf8len(g.c);
-			width = (term.line[term.c.y][curx].mode & ATTR_WIDE)\
-				? 2 : 1;
-			xdraws(g.c, g, term.c.x, term.c.y, width, sl);
-		} else {
-			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderxpx + curx * xw.cw,
-					borderypx + term.c.y * xw.ch,
-					xw.cw - 1, 1);
-			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderxpx + curx * xw.cw,
-					borderypx + term.c.y * xw.ch,
-					1, xw.ch - 1);
-			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderxpx + (curx + 1) * xw.cw - 1,
-					borderypx + term.c.y * xw.ch,
-					1, xw.ch - 1);
-			XftDrawRect(xw.draw, &dc.col[defaultcs],
-					borderxpx + curx * xw.cw,
-					borderypx + (term.c.y + 1) * xw.ch - 1,
-					xw.cw, 1);
+	/* draw the new one */
+	if(xw.state & WIN_FOCUSED) {
+		if(IS_SET(MODE_REVERSE)) {
+			g.mode |= ATTR_REVERSE;
+			g.fg = defaultcs;
+			g.bg = defaultfg;
 		}
-		oldx = curx, oldy = term.c.y;
+
+		sl = utf8len(g.c);
+		width = (term.line[term.c.y][curx].mode & ATTR_WIDE)\
+			? 2 : 1;
+		xdraws(g.c, g, term.c.x, term.c.y, width, sl);
+	} else {
+		XftDrawRect(xw.draw, &dc.col[defaultcs],
+				borderxpx + curx * xw.cw,
+				borderypx + term.c.y * xw.ch,
+				xw.cw - 1, 1);
+		XftDrawRect(xw.draw, &dc.col[defaultcs],
+				borderxpx + curx * xw.cw,
+				borderypx + term.c.y * xw.ch,
+				1, xw.ch - 1);
+		XftDrawRect(xw.draw, &dc.col[defaultcs],
+				borderxpx + (curx + 1) * xw.cw - 1,
+				borderypx + term.c.y * xw.ch,
+				1, xw.ch - 1);
+		XftDrawRect(xw.draw, &dc.col[defaultcs],
+				borderxpx + curx * xw.cw,
+				borderypx + (term.c.y + 1) * xw.ch - 1,
+				xw.cw, 1);
 	}
+	oldx = curx, oldy = term.c.y;
 }
 
 
