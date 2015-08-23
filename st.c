@@ -483,6 +483,7 @@ static void *xmalloc(size_t);
 static void *xrealloc(void *, size_t);
 static char *xstrdup(char *);
 
+static void apply_opt_colors(char *opt_colors);
 static void usage(void);
 
 static void (*handler[LASTEvent])(XEvent *) = {
@@ -4159,6 +4160,19 @@ resize(XEvent *e)
 }
 
 void
+apply_opt_colors(char *opt_colors)
+{
+	char *ch;
+	unsigned int i = 0;
+	ch = strtok(opt_colors, ",");
+	while (ch != NULL) {
+		colorname[i] = ch;
+		i++;
+		ch = strtok(NULL, ",");
+	}
+}
+
+void
 run(void)
 {
 	XEvent ev;
@@ -4270,10 +4284,12 @@ void
 usage(void)
 {
 	die("%s " VERSION " (c) 2010-2015 st engineers\n"
-	"usage: st [-a] [-v] [-c class] [-f font] [-g geometry] [-o file]\n"
+	"usage: st [-a] [-v] [-c class] [-f font] [-b color0,color1,...]"
+	" [-g geometry] [-o file]\n"
 	"          [-i] [-t title] [-T title] [-w windowid] [-e command ...]"
 	" [command ...]\n"
-	"       st [-a] [-v] [-c class] [-f font] [-g geometry] [-o file]\n"
+	"       st [-a] [-v] [-c class] [-f font] [-b color0,color1,...]"
+	" [-g geometry] [-o file]\n"
 	"          [-i] [-t title] [-T title] [-w windowid] [-l line]"
 	" [stty_args ...]\n",
 	argv0);
@@ -4288,9 +4304,13 @@ main(int argc, char *argv[])
 	xw.isfixed = False;
 	xw.cursor = 0;
 
+
 	ARGBEGIN {
 	case 'a':
 		allowaltscreen = 0;
+		break;
+	case 'b':
+		apply_opt_colors(EARGF(usage()));
 		break;
 	case 'c':
 		opt_class = EARGF(usage());
