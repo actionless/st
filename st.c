@@ -4162,14 +4162,21 @@ resize(XEvent *e)
 void
 apply_opt_colors(char *opt_colors)
 {
-	char *ch;
-	unsigned int i = 0;
-	ch = strtok(opt_colors, ",");
-	while (ch != NULL) {
-		colorname[i] = ch;
-		i++;
-		ch = strtok(NULL, ",");
+	char *line;
+
+	unsigned int key;
+	char *value;
+
+	char *tofree = strdup(opt_colors);
+
+	while ((line = strsep(&tofree, ",")) != NULL) {
+		value = strsep(&line,  "=");
+		key = atoi(value);
+		value = strsep(&line, "=");
+		colorname[key] = value;
 	}
+	free(tofree);
+	free(line);
 }
 
 void
@@ -4284,11 +4291,11 @@ void
 usage(void)
 {
 	die("%s " VERSION " (c) 2010-2015 st engineers\n"
-	"usage: st [-a] [-v] [-c class] [-f font] [-b color0,color1,...]"
+	"usage: st [-a] [-v] [-c class] [-f font] [-b 0=color0,1=color1,...]"
 	" [-g geometry] [-o file]\n"
 	"          [-i] [-t title] [-T title] [-w windowid] [-e command ...]"
 	" [command ...]\n"
-	"       st [-a] [-v] [-c class] [-f font] [-b color0,color1,...]"
+	"       st [-a] [-v] [-c class] [-f font] [-b 0=color0,1=color1,...]"
 	" [-g geometry] [-o file]\n"
 	"          [-i] [-t title] [-T title] [-w windowid] [-l line]"
 	" [stty_args ...]\n",
@@ -4363,4 +4370,3 @@ run:
 
 	return 0;
 }
-
