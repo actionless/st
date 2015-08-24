@@ -4162,13 +4162,10 @@ resize(XEvent *e)
 void
 apply_opt_colors(char *opt_colors)
 {
+	char *tofree = strdup(opt_colors);
 	char *line;
-
 	unsigned int key;
 	char *value;
-
-	char *tofree = strdup(opt_colors);
-
 	while ((line = strsep(&tofree, ",")) != NULL) {
 		value = strsep(&line,  "=");
 		key = atoi(value);
