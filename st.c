@@ -4223,6 +4223,23 @@ resize(XEvent *e)
 }
 
 void
+apply_opt_colors(char *opt_colors)
+{
+	char *tofree = strdup(opt_colors);
+	char *line;
+	unsigned int key;
+	char *value;
+	while ((line = strsep(&tofree, ",")) != NULL) {
+		value = strsep(&line,  "=");
+		key = atoi(value);
+		value = strsep(&line, "=");
+		colorname[key] = value;
+	}
+	free(tofree);
+	free(line);
+}
+
+void
 run(void)
 {
 	XEvent ev;
