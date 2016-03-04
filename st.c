@@ -4225,18 +4225,24 @@ resize(XEvent *e)
 void
 apply_opt_colors(char *opt_colors)
 {
-	char *tofree = strdup(opt_colors);
-	char *line;
+	char *temp_str, *token, *value;
 	unsigned int key;
-	char *value;
-	while ((line = strsep(&tofree, ",")) != NULL) {
-		value = strsep(&line,  "=");
+	char *saveptr1, *saveptr2;
+	for (temp_str = opt_colors ; ; temp_str = NULL) {
+		token = strtok_r(temp_str, ",", &saveptr1);
+		if (token == NULL)
+			break;
+
+		value = strtok_r(token, "=", &saveptr2);
+		if (value == NULL)
+			break;
 		key = atoi(value);
-		value = strsep(&line, "=");
+		token = NULL;
+		value = strtok_r(token, "=", &saveptr2);
 		colorname[key] = value;
 	}
-	free(tofree);
-	free(line);
+	free(temp_str);
+	free(token);
 }
 
 void
