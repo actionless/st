@@ -485,6 +485,7 @@ static void *xmalloc(size_t);
 static void *xrealloc(void *, size_t);
 static char *xstrdup(char *);
 
+static void apply_opt_colors(char *opt_colors);
 static void usage(void);
 
 static void (*handler[LASTEvent])(XEvent *) = {
@@ -4215,6 +4216,29 @@ resize(XEvent *e)
 }
 
 void
+apply_opt_colors(char *opt_colors)
+{
+	char *temp_str, *token, *value;
+	unsigned int key;
+	char *saveptr1, *saveptr2;
+	for (temp_str = opt_colors ; ; temp_str = NULL) {
+		token = strtok_r(temp_str, ",", &saveptr1);
+		if (token == NULL)
+			break;
+
+		value = strtok_r(token, "=", &saveptr2);
+		if (value == NULL)
+			break;
+		key = atoi(value);
+		token = NULL;
+		value = strtok_r(token, "=", &saveptr2);
+		colorname[key] = value;
+	}
+	free(temp_str);
+	free(token);
+}
+
+void
 run(void)
 {
 	XEvent ev;
@@ -4328,10 +4352,12 @@ usage(void)
 {
 	die("usage: %s [-aiv] [-c class] [-f font] [-g geometry]"
 	    " [-n name] [-o file]\n"
+            "          [-b 0=color0,1=color1,...]\n"
 	    "          [-T title] [-t title] [-w windowid]"
 	    " [[-e] command [args ...]]\n"
 	    "       %s [-aiv] [-c class] [-f font] [-g geometry]"
 	    " [-n name] [-o file]\n"
+            "          [-b 0=color0,1=color1,...]\n"
 	    "          [-T title] [-t title] [-w windowid] -l line"
 	    " [stty_args ...]\n", argv0, argv0);
 }
@@ -4348,6 +4374,9 @@ main(int argc, char *argv[])
 	ARGBEGIN {
 	case 'a':
 		allowaltscreen = 0;
+		break;
+	case 'b':
+		apply_opt_colors(EARGF(usage()));
 		break;
 	case 'c':
 		opt_class = EARGF(usage());
